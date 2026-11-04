@@ -38,6 +38,16 @@ func TestStripTimestamp(t *testing.T) {
 			"2026-03",
 			"2026-03",
 		},
+		{
+			"bom before timestamp",
+			"\ufeff2026-03-16T13:34:37.3465175Z ##[group]Run make lint",
+			"##[group]Run make lint",
+		},
+		{
+			"bom without timestamp",
+			"\ufeff##[group]Run make lint",
+			"##[group]Run make lint",
+		},
 	}
 
 	for _, tt := range tests {
@@ -71,6 +81,10 @@ func TestStripANSI(t *testing.T) {
 		{"cursor move", "\x1b[1Gline", "line"},
 		{"no ansi", "plain text", "plain text"},
 		{"interleaved", "\x1b[31m✖\x1b[39m 1 problem", "✖ 1 problem"},
+		{"caret sgr", "^[[36;1mmake lint^[[0m", "make lint"},
+		{"caret reset", "done^[[0m", "done"},
+		{"mixed real and caret", "\x1b[34m==>^[[39m ^[[1mFetching\x1b[0m", "==> Fetching"},
+		{"caret without csi", "press ^[ to exit", "press ^[ to exit"},
 	}
 
 	for _, tt := range tests {
