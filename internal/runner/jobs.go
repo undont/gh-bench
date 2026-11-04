@@ -293,7 +293,9 @@ type logPair struct {
 func fetchJobLog(_ context.Context, jobID, runID int64) (logPair, error) {
 	// Try REST API: GET /repos/{owner}/{repo}/actions/jobs/{job_id}/logs
 	// Returns plain text — no tab-prefixed formatting, but still has timestamps.
-	log, err := Executor.Run("api", "repos/{owner}/{repo}/actions/jobs/"+strconv.FormatInt(jobID, 10)+"/logs")
+	// gh refuses logs containing escape sequences without the flag; gh < 2.97 rejects the flag and falls through to run view
+	log, err := Executor.Run("api", "repos/{owner}/{repo}/actions/jobs/"+strconv.FormatInt(jobID, 10)+"/logs",
+		"--allow-escape-sequences")
 	if err == nil {
 		log = logutil.StripANSI(log)
 		return logPair{clean: logutil.StripTimestamps(log), raw: log}, nil

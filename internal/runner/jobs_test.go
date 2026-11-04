@@ -30,7 +30,7 @@ func TestGetFailedSteps_SingleFailure(t *testing.T) {
 		]
 	}`
 	// API-style raw log (no tab prefixes).
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs"] = "FAIL: something went wrong\nerror at line 42"
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs --allow-escape-sequences"] = "FAIL: something went wrong\nerror at line 42"
 
 	orig := Executor
 	Executor = stub
@@ -86,6 +86,45 @@ func TestGetFailedSteps_FallsBackToRunView(t *testing.T) {
 	}
 	if !strings.Contains(steps[0].Log, "line 1") {
 		t.Errorf("expected content to be preserved, got: %q", steps[0].Log)
+	}
+}
+
+func TestFetchJobLog_PassesAllowEscapeSequences(t *testing.T) {
+	stub := newStubExecutor()
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs --allow-escape-sequences"] = "\x1b[36mok\x1b[0m"
+
+	orig := Executor
+	Executor = stub
+	defer func() { Executor = orig }()
+
+	lp, err := fetchJobLog(context.Background(), 1002, 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"api", "repos/{owner}/{repo}/actions/jobs/1002/logs", "--allow-escape-sequences"}
+	if got := stub.calls[0]; strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("api call args = %q, want %q", got, want)
+	}
+	if lp.clean != "ok" {
+		t.Errorf("expected escape sequences stripped, got: %q", lp.clean)
+	}
+}
+
+func TestFetchJobLog_FlagRejectedFallsBackToRunView(t *testing.T) {
+	stub := newStubExecutor()
+	// no api handler: the stub errors as gh < 2.97 does on an unknown flag
+	stub.handlers["run view 100 --log --job 1002"] = "test\tRun tests\tline 1"
+
+	orig := Executor
+	Executor = stub
+	defer func() { Executor = orig }()
+
+	lp, err := fetchJobLog(context.Background(), 1002, 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if lp.clean != "line 1" {
+		t.Errorf("expected run view fallback log, got: %q", lp.clean)
 	}
 }
 
@@ -150,7 +189,7 @@ func TestGetFailedSteps_SkipsInfrastructureSteps(t *testing.T) {
 			}
 		]
 	}`
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/5001/logs"] = "test output"
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/5001/logs --allow-escape-sequences"] = "test output"
 
 	orig := Executor
 	Executor = stub
@@ -240,7 +279,7 @@ func TestGetFailedSteps_RawLogPreservesTimestamps(t *testing.T) {
 		]
 	}`
 	// API-style raw log with timestamps.
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs"] = "2026-03-20T12:15:15.1234567Z --- FAIL: TestFoo (0.01s)\n2026-03-20T12:15:16.1234567Z FAIL"
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs --allow-escape-sequences"] = "2026-03-20T12:15:15.1234567Z --- FAIL: TestFoo (0.01s)\n2026-03-20T12:15:16.1234567Z FAIL"
 
 	orig := Executor
 	Executor = stub
@@ -381,7 +420,7 @@ func TestGetFailedSteps_MultipleStepsSegmented(t *testing.T) {
 			}
 		]
 	}`
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs"] =
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs --allow-escape-sequences"] =
 		"2026-03-20T12:15:15.1234567Z ##[group]Run tests\n" +
 			"2026-03-20T12:15:16.1234567Z FAIL: TestFoo\n" +
 			"2026-03-20T12:15:17.1234567Z ##[endgroup]\n" +
@@ -503,7 +542,7 @@ func TestGetFailedSteps_MultipleAttempts(t *testing.T) {
 			}
 		]
 	}`
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs"] = "FAIL: TestBar\nerror on attempt 2"
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs --allow-escape-sequences"] = "FAIL: TestBar\nerror on attempt 2"
 
 	orig := Executor
 	Executor = stub
@@ -540,7 +579,7 @@ func TestGetFailedSteps_AttemptAnnotatedOnFirstAttempt(t *testing.T) {
 			}
 		]
 	}`
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/2001/logs"] = "FAIL: TestFoo"
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/2001/logs --allow-escape-sequences"] = "FAIL: TestFoo"
 
 	orig := Executor
 	Executor = stub
