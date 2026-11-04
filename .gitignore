@@ -1,6 +1,5 @@
 # AI Tools
 /.claude/*
-!/.claude/commands/
 .plans/*
 
 # Binary
