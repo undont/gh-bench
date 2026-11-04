@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
@@ -251,6 +252,11 @@ func TestStripTabPrefixesOnly(t *testing.T) {
 			"only\tone tab",
 			"only\tone tab",
 		},
+		{
+			"strips bom after tab prefixes",
+			"test\tRun tests\t\ufeff2026-03-16T13:34:37.3465175Z ##[group]Run make test",
+			"2026-03-16T13:34:37.3465175Z ##[group]Run make test",
+		},
 	}
 
 	for _, tt := range tests {
@@ -451,6 +457,82 @@ func TestGetFailedSteps_MultipleStepsSegmented(t *testing.T) {
 	if strings.Contains(steps[1].Log, "FAIL: TestFoo") {
 		t.Errorf("step 1 should not contain test failure, got %q", steps[1].Log)
 	}
+}
+
+func TestGetFailedSteps_RunViewSegmentsNamedStep(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/run-view-named-step.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := newStubExecutor()
+	stub.handlers["run view 100 --json jobs"] = `{
+		"jobs": [
+			{
+				"databaseId": 1002,
+				"name": "Startup Benchmark",
+				"status": "completed",
+				"conclusion": "failure",
+				"steps": [
+					{"name": "Install benchmark dependencies", "status": "completed", "conclusion": "success", "number": 4},
+					{"name": "Benchmark zsh startup", "status": "completed", "conclusion": "failure", "number": 5},
+					{"name": "Post Run actions/checkout@v4", "status": "completed", "conclusion": "success", "number": 6}
+				]
+			}
+		]
+	}`
+	stub.handlers["run view 100 --log --job 1002"] = string(fixture)
+
+	orig := Executor
+	Executor = stub
+	defer func() { Executor = orig }()
+
+	steps, err := GetFailedSteps(context.Background(), 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(steps))
+	}
+
+	for name, log := range map[string]string{"Log": steps[0].Log, "RawLog": steps[0].RawLog} {
+		for _, want := range []string{"Benchmarking zsh startup", "KeyError: 'median'"} {
+			if !strings.Contains(log, want) {
+				t.Errorf("%s missing %q, got %q", name, want, log)
+			}
+		}
+		for _, unwanted := range []string{"Downloading bottle manifests", "Post job cleanup.", "git version", "^[", "\ufeff", "Startup Benchmark\t"} {
+			if strings.Contains(log, unwanted) {
+				t.Errorf("%s contains %q, got %q", name, unwanted, log)
+			}
+		}
+	}
+	if strings.Contains(steps[0].Log, "2026-11-04T") {
+		t.Errorf("Log should have no timestamps, got %q", steps[0].Log)
+	}
+	if !strings.HasPrefix(steps[0].RawLog, "2026-11-04T20:17:37.5576010Z ##[group]Run ") {
+		t.Errorf("RawLog should start at the step's timestamped header, got %q", steps[0].RawLog)
+	}
+}
+
+
+func TestStepLogs_RunViewColumn(t *testing.T) {
+	steps := []Step{{Name: "Run tests"}, {Name: "Lint"}}
+	runView := "test\t run TESTS \tFAIL: TestFoo\ntest\tLint\tlint ok"
+	lp := logPair{clean: stripLogPrefixes(runView), raw: stripTabPrefixesOnly(runView), runView: runView}
+
+	t.Run("matches case and whitespace insensitively", func(t *testing.T) {
+		clean, raw := stepLogs(lp, "Run tests", steps)
+		if clean != "FAIL: TestFoo" || raw != "FAIL: TestFoo" {
+			t.Errorf("got clean %q raw %q", clean, raw)
+		}
+	})
+
+	t.Run("no matching column falls back to the full log", func(t *testing.T) {
+		clean, raw := stepLogs(lp, "Build", steps)
+		if clean != lp.clean || raw != lp.raw {
+			t.Errorf("got clean %q raw %q", clean, raw)
+		}
+	})
 }
 
 func TestShouldSkipStep(t *testing.T) {

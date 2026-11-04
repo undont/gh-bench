@@ -139,15 +139,46 @@ func assembleStepResults(toFetch []jobSteps, logs []logPair) []StepResult {
 	var out []StepResult
 	for i, js := range toFetch {
 		for _, step := range js.steps {
+			clean, raw := stepLogs(logs[i], step.Name, js.info.Steps)
 			out = append(out, StepResult{
 				Name:    step.Name,
-				Log:     segmentByStep(logs[i].clean, step.Name, js.info.Steps),
-				RawLog:  segmentByStep(logs[i].raw, step.Name, js.info.Steps),
+				Log:     clean,
+				RawLog:  raw,
 				Attempt: js.info.Attempt,
 			})
 		}
 	}
 	return out
+}
+
+// stepLogs prefers the run-view step column over group headers, whose labels
+// carry the step's command rather than its name.
+func stepLogs(lp logPair, stepName string, allSteps []Step) (clean, raw string) {
+	if lines := runViewStepLines(lp.runView, stepName); lines != "" {
+		return stripLogPrefixes(lines), stripTabPrefixesOnly(lines)
+	}
+	return segmentByStep(lp.clean, stepName, allSteps), segmentByStep(lp.raw, stepName, allSteps)
+}
+
+// runViewStepLines returns the lines of gh run view --log output whose step column matches stepName.
+func runViewStepLines(log, stepName string) string {
+	target := strings.TrimSpace(stepName)
+	var b strings.Builder
+	for line := range strings.SplitSeq(log, "\n") {
+		_, rest, ok := strings.Cut(line, "\t")
+		if !ok {
+			continue
+		}
+		step, _, ok := strings.Cut(rest, "\t")
+		if !ok || !strings.EqualFold(strings.TrimSpace(step), target) {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(line)
+	}
+	return b.String()
 }
 
 // getJobsForRun fetches jobs for a run using the REST API with filter=all so
@@ -284,8 +315,9 @@ func segmentByStep(log, stepName string, allSteps []Step) string {
 
 // logPair holds both the cleaned log (for parsers) and raw log (timestamps preserved).
 type logPair struct {
-	clean string // timestamps stripped
-	raw   string // timestamps preserved, tab-prefixes stripped
+	clean   string // timestamps stripped
+	raw     string // timestamps preserved, tab-prefixes stripped
+	runView string // gh run view --log output with job\tstep\t prefixes; empty for REST logs
 }
 
 // fetchJobLog retrieves the raw log for a specific job, trying the REST API
@@ -310,7 +342,7 @@ func fetchJobLog(_ context.Context, jobID, runID int64) (logPair, error) {
 
 	// Strip ANSI, then tab-delimited prefixes; preserve timestamps in raw version.
 	log = logutil.StripANSI(log)
-	return logPair{clean: stripLogPrefixes(log), raw: stripTabPrefixesOnly(log)}, nil
+	return logPair{clean: stripLogPrefixes(log), raw: stripTabPrefixesOnly(log), runView: log}, nil
 }
 
 // stripLogPrefixes removes job\tstep\t prefixes and GitHub Actions timestamps
@@ -363,7 +395,7 @@ func stripTabPrefixesOnly(log string) string {
 			b.WriteString(line)
 			continue
 		}
-		b.WriteString(after)
+		b.WriteString(strings.TrimPrefix(after, "\ufeff"))
 	}
 
 	return b.String()

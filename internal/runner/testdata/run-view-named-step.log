@@ -1,0 +1,17 @@
+Startup Benchmark	Install benchmark dependencies	﻿2026-11-04T20:17:25.5969320Z ##[group]Run brew install hyperfine fzf direnv fnm
+Startup Benchmark	Install benchmark dependencies	2026-11-04T20:17:25.5969740Z ^[[36;1mbrew install hyperfine fzf direnv fnm^[[0m
+Startup Benchmark	Install benchmark dependencies	2026-11-04T20:17:25.6022470Z ##[endgroup]
+Startup Benchmark	Install benchmark dependencies	2026-11-04T20:17:27.9211740Z ^[[32m==>^[[0m ^[[1mDownloading bottle manifests^[[0m
+Startup Benchmark	Benchmark zsh startup	﻿2026-11-04T20:17:37.5576010Z ##[group]Run ./scripts/ci/benchmark-startup.sh 125
+Startup Benchmark	Benchmark zsh startup	2026-11-04T20:17:37.5576390Z ^[[36;1m./scripts/ci/benchmark-startup.sh 125^[[0m
+Startup Benchmark	Benchmark zsh startup	2026-11-04T20:17:37.5588110Z ##[endgroup]
+Startup Benchmark	Benchmark zsh startup	2026-11-04T20:17:37.6599190Z Benchmarking zsh startup (threshold: 125ms)...
+Startup Benchmark	Benchmark zsh startup	2026-11-04T20:17:47.1382200Z Traceback (most recent call last):
+Startup Benchmark	Benchmark zsh startup	2026-11-04T20:17:47.1385440Z   File "<string>", line 6, in <module>
+Startup Benchmark	Benchmark zsh startup	2026-11-04T20:17:47.1386850Z     print(result['median'])
+Startup Benchmark	Benchmark zsh startup	2026-11-04T20:17:47.1388210Z           ~~~~~~^^^^^^^^^^
+Startup Benchmark	Benchmark zsh startup	2026-11-04T20:17:47.1389240Z KeyError: 'median'
+Startup Benchmark	Benchmark zsh startup	2026-11-04T20:17:47.1501520Z ##[error]Process completed with exit code 1.
+Startup Benchmark	Post Run actions/checkout@v4	﻿2026-11-04T20:17:47.1793500Z Post job cleanup.
+Startup Benchmark	Post Run actions/checkout@v4	2026-11-04T20:17:47.5205680Z [command]/opt/homebrew/bin/git version
+Startup Benchmark	Post Run actions/checkout@v4	2026-11-04T20:17:47.5486280Z git version 2.56.0
