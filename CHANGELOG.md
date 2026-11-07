@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed
 - `failures` command now correctly surfaces jobs from re-run attempts — previously, jobs that failed in an earlier attempt and weren't re-run were silently dropped. The REST API is now queried with `filter=all` and deduplicated by job name keeping the latest attempt. Steps from re-runs are annotated with the attempt number (e.g. `Run tests (attempt 2)`)
 - Vitest parser now detects `--typecheck` mode output (tsc-backed) and surfaces each TypeScript diagnostic as a failure — previously these logs fell through to the fallback parser
+- `failures` output no longer shows raw escape codes (`^[[34m`), stray timestamps or byte-order marks on gh 2.97 and later; job logs are fetched through the REST API again
+- A failing step with a `name:` now shows only its own log lines instead of the whole job log
 
 ## [0.1.10]
 
