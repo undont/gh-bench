@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/undont/gh-bench/internal/logutil"
 	"golang.org/x/sync/errgroup"
@@ -22,10 +23,17 @@ type Job struct {
 
 // Step represents a GitHub Actions job step.
 type Step struct {
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	Conclusion string `json:"conclusion"`
-	Number     int    `json:"number"`
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	Conclusion string    `json:"conclusion"`
+	Number     int       `json:"number"`
+	StartedAt  time.Time `json:"startedAt"`
+}
+
+// apiStep is a Step in the REST API's snake_case spelling.
+type apiStep struct {
+	Step
+	StartedAt time.Time `json:"started_at"`
 }
 
 // jobInfo pairs a Job with the run attempt it came from.
@@ -36,12 +44,12 @@ type jobInfo struct {
 
 // apiJob is the REST API representation of a job, including run_attempt.
 type apiJob struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	Status     string `json:"status"`
-	Conclusion string `json:"conclusion"`
-	RunAttempt int    `json:"run_attempt"`
-	Steps      []Step `json:"steps"`
+	ID         int64     `json:"id"`
+	Name       string    `json:"name"`
+	Status     string    `json:"status"`
+	Conclusion string    `json:"conclusion"`
+	RunAttempt int       `json:"run_attempt"`
+	Steps      []apiStep `json:"steps"`
 }
 
 // jobSteps pairs a jobInfo with its failed steps.
@@ -139,7 +147,7 @@ func assembleStepResults(toFetch []jobSteps, logs []logPair) []StepResult {
 	var out []StepResult
 	for i, js := range toFetch {
 		for _, step := range js.steps {
-			clean, raw := stepLogs(logs[i], step.Name, js.info.Steps)
+			clean, raw := stepLogs(logs[i], step, js.info.Steps)
 			out = append(out, StepResult{
 				Name:    step.Name,
 				Log:     clean,
@@ -151,13 +159,89 @@ func assembleStepResults(toFetch []jobSteps, logs []logPair) []StepResult {
 	return out
 }
 
-// stepLogs prefers the run-view step column over group headers, whose labels
-// carry the step's command rather than its name.
-func stepLogs(lp logPair, stepName string, allSteps []Step) (clean, raw string) {
-	if lines := runViewStepLines(lp.runView, stepName); lines != "" {
+// stepLogs prefers the run-view step column, then step timing, over group
+// headers, whose labels carry the step's command rather than its name.
+func stepLogs(lp logPair, step Step, allSteps []Step) (clean, raw string) {
+	if lines := runViewStepLines(lp.runView, step.Name); lines != "" {
 		return stripLogPrefixes(lines), stripTabPrefixesOnly(lines)
 	}
-	return segmentByStep(lp.clean, stepName, allSteps), segmentByStep(lp.raw, stepName, allSteps)
+	if start, end, ok := timedStepRange(lp.raw, step, allSteps); ok {
+		return lineRange(lp.clean, start, end), lineRange(lp.raw, start, end)
+	}
+	return segmentByStep(lp.clean, step.Name, allSteps), segmentByStep(lp.raw, step.Name, allSteps)
+}
+
+// timedStepRange returns the [start, end) line range of step in a timestamped log.
+// step timing has one-second resolution and adjacent steps share boundary seconds,
+// so the range is anchored on "##[group]Run " step headers: the first one stamped
+// at or after the step's start and before the next later-starting step's start, up
+// to the first one stamped at or after that next start, or "Post job cleanup."
+func timedStepRange(raw string, step Step, allSteps []Step) (start, end int, ok bool) {
+	if step.StartedAt.IsZero() {
+		return 0, 0, false
+	}
+	next := nextStepStart(step.StartedAt, allSteps)
+
+	lines := strings.Split(raw, "\n")
+	start = -1
+	for i, line := range lines {
+		stamp, body, ok := splitTimestamp(line)
+		if !ok {
+			continue
+		}
+		isHeader := strings.HasPrefix(body, stepHeader)
+		if start < 0 {
+			if !isHeader || stamp.Before(step.StartedAt) {
+				continue
+			}
+			if !next.IsZero() && !stamp.Before(next) {
+				return 0, 0, false // header belongs to a later step
+			}
+			start = i
+			continue
+		}
+		if strings.TrimSpace(body) == "Post job cleanup." {
+			return start, i, true
+		}
+		if isHeader && !next.IsZero() && !stamp.Before(next) {
+			return start, i, true
+		}
+	}
+	if start < 0 {
+		return 0, 0, false
+	}
+	return start, len(lines), true
+}
+
+const stepHeader = "##[group]Run "
+
+// nextStepStart returns the earliest step start after started, or the zero time.
+func nextStepStart(started time.Time, allSteps []Step) time.Time {
+	var next time.Time
+	for _, s := range allSteps {
+		if s.StartedAt.After(started) && (next.IsZero() || s.StartedAt.Before(next)) {
+			next = s.StartedAt
+		}
+	}
+	return next
+}
+
+// splitTimestamp returns a log line's timestamp truncated to the second, and the rest of the line.
+func splitTimestamp(line string) (time.Time, string, bool) {
+	line = strings.TrimPrefix(line, "\ufeff")
+	loc := logutil.TimestampRe.FindStringIndex(line)
+	if loc == nil {
+		return time.Time{}, "", false
+	}
+	stamp, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(line[:loc[1]]))
+	if err != nil {
+		return time.Time{}, "", false
+	}
+	return stamp.Truncate(time.Second), line[loc[1]:], true
+}
+
+func lineRange(log string, start, end int) string {
+	return strings.Join(strings.Split(log, "\n")[start:end], "\n")
 }
 
 // runViewStepLines returns the lines of gh run view --log output whose step column matches stepName.
@@ -224,10 +308,19 @@ func deduplicateByLatestAttempt(jobs []apiJob) []jobInfo {
 				Name:       rj.Name,
 				Status:     rj.Status,
 				Conclusion: rj.Conclusion,
-				Steps:      rj.Steps,
+				Steps:      stepsFromAPI(rj.Steps),
 			},
 			Attempt: rj.RunAttempt,
 		})
+	}
+	return out
+}
+
+func stepsFromAPI(steps []apiStep) []Step {
+	out := make([]Step, len(steps))
+	for i, s := range steps {
+		out[i] = s.Step
+		out[i].StartedAt = s.StartedAt
 	}
 	return out
 }
