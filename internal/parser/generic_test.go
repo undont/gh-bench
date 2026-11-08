@@ -113,7 +113,7 @@ func TestGenericParser_DetectNegative(t *testing.T) {
 	p := &GenericParser{}
 	negatives := []string{
 		"just some unstructured build output\nnothing to see here",
-		"make: *** [Makefile:371: lint] Error 1",       // not a diagnostic
+		"make: *** [Makefile:371: lint] Error 1",        // not a diagnostic
 		"see config at internal/foo/bar.go:12 for more", // single stray reference
 	}
 	for _, n := range negatives {

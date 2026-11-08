@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/huh/spinner"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/undont/gh-bench/internal/config"
 	"github.com/spf13/cobra"
+	"github.com/undont/gh-bench/internal/config"
 )
 
 // Version is set at build time via ldflags.

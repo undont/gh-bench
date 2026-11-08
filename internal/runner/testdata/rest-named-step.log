@@ -1,0 +1,30 @@
+2026-11-04T20:17:25.5503420Z ##[group]Filter zsh = true
+2026-11-04T20:17:25.5503710Z Matching files:
+2026-11-04T20:17:25.5504000Z zsh/dotfiles.zsh [modified]
+2026-11-04T20:17:25.5518220Z ##[endgroup]
+2026-11-04T20:17:25.5518760Z Changes output set to ["zsh"]
+2026-11-04T20:17:25.5969330Z ##[group]Run brew install hyperfine fzf direnv fnm
+2026-11-04T20:17:25.5969740Z [36;1mbrew install hyperfine fzf direnv fnm[0m
+2026-11-04T20:17:25.6007390Z shell: /bin/bash -e {0}
+2026-11-04T20:17:25.6022060Z env:
+2026-11-04T20:17:25.6022260Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-11-04T20:17:25.6022470Z ##[endgroup]
+2026-11-04T20:17:27.9211900Z [32m==>[0m [1mDownloading bottle manifests[0m
+2026-11-04T20:17:37.0040300Z [34m==>[0m [1mPouring fnm--1.39.0.arm64_sequoia.bottle.tar.gz[0m
+2026-11-04T20:17:37.5428760Z [32m==>[0m [1mCaveats[0m
+2026-11-04T20:17:37.5576030Z ##[group]Run ./scripts/ci/benchmark-startup.sh 125
+2026-11-04T20:17:37.5576400Z [36;1m./scripts/ci/benchmark-startup.sh 125[0m
+2026-11-04T20:17:37.5587270Z shell: /opt/homebrew/bin/bash -e {0}
+2026-11-04T20:17:37.5587610Z env:
+2026-11-04T20:17:37.5587810Z   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+2026-11-04T20:17:37.5588120Z ##[endgroup]
+2026-11-04T20:17:37.6599450Z Benchmarking zsh startup (threshold: 125ms)...
+2026-11-04T20:17:47.1382260Z Traceback (most recent call last):
+2026-11-04T20:17:47.1385450Z   File "<string>", line 6, in <module>
+2026-11-04T20:17:47.1386860Z     print(result['median'])
+2026-11-04T20:17:47.1388220Z           ~~~~~~^^^^^^^^^^
+2026-11-04T20:17:47.1389250Z KeyError: 'median'
+2026-11-04T20:17:47.1501550Z ##[error]Process completed with exit code 1.
+2026-11-04T20:17:47.1793520Z Post job cleanup.
+2026-11-04T20:17:47.5205770Z [command]/opt/homebrew/bin/git version
+2026-11-04T20:17:47.5486330Z git version 2.56.0

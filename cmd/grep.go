@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/undont/gh-bench/internal/runner"
 	"github.com/spf13/cobra"
+	"github.com/undont/gh-bench/internal/runner"
 )
 
 var grepCmd = &cobra.Command{

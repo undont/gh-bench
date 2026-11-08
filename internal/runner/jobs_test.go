@@ -2,8 +2,13 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/undont/gh-bench/internal/logutil"
 )
 
 func TestGetFailedSteps_SingleFailure(t *testing.T) {
@@ -30,7 +35,7 @@ func TestGetFailedSteps_SingleFailure(t *testing.T) {
 		]
 	}`
 	// API-style raw log (no tab prefixes).
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs"] = "FAIL: something went wrong\nerror at line 42"
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs --allow-escape-sequences"] = "FAIL: something went wrong\nerror at line 42"
 
 	orig := Executor
 	Executor = stub
@@ -86,6 +91,45 @@ func TestGetFailedSteps_FallsBackToRunView(t *testing.T) {
 	}
 	if !strings.Contains(steps[0].Log, "line 1") {
 		t.Errorf("expected content to be preserved, got: %q", steps[0].Log)
+	}
+}
+
+func TestFetchJobLog_PassesAllowEscapeSequences(t *testing.T) {
+	stub := newStubExecutor()
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs --allow-escape-sequences"] = "\x1b[36mok\x1b[0m"
+
+	orig := Executor
+	Executor = stub
+	defer func() { Executor = orig }()
+
+	lp, err := fetchJobLog(context.Background(), 1002, 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := []string{"api", "repos/{owner}/{repo}/actions/jobs/1002/logs", "--allow-escape-sequences"}
+	if got := stub.calls[0]; strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("api call args = %q, want %q", got, want)
+	}
+	if lp.clean != "ok" {
+		t.Errorf("expected escape sequences stripped, got: %q", lp.clean)
+	}
+}
+
+func TestFetchJobLog_FlagRejectedFallsBackToRunView(t *testing.T) {
+	stub := newStubExecutor()
+	// no api handler: the stub errors as gh < 2.97 does on an unknown flag
+	stub.handlers["run view 100 --log --job 1002"] = "test\tRun tests\tline 1"
+
+	orig := Executor
+	Executor = stub
+	defer func() { Executor = orig }()
+
+	lp, err := fetchJobLog(context.Background(), 1002, 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if lp.clean != "line 1" {
+		t.Errorf("expected run view fallback log, got: %q", lp.clean)
 	}
 }
 
@@ -150,7 +194,7 @@ func TestGetFailedSteps_SkipsInfrastructureSteps(t *testing.T) {
 			}
 		]
 	}`
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/5001/logs"] = "test output"
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/5001/logs --allow-escape-sequences"] = "test output"
 
 	orig := Executor
 	Executor = stub
@@ -212,6 +256,11 @@ func TestStripTabPrefixesOnly(t *testing.T) {
 			"only\tone tab",
 			"only\tone tab",
 		},
+		{
+			"strips bom after tab prefixes",
+			"test\tRun tests\t\ufeff2026-03-16T13:34:37.3465175Z ##[group]Run make test",
+			"2026-03-16T13:34:37.3465175Z ##[group]Run make test",
+		},
 	}
 
 	for _, tt := range tests {
@@ -240,7 +289,7 @@ func TestGetFailedSteps_RawLogPreservesTimestamps(t *testing.T) {
 		]
 	}`
 	// API-style raw log with timestamps.
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs"] = "2026-03-20T12:15:15.1234567Z --- FAIL: TestFoo (0.01s)\n2026-03-20T12:15:16.1234567Z FAIL"
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs --allow-escape-sequences"] = "2026-03-20T12:15:15.1234567Z --- FAIL: TestFoo (0.01s)\n2026-03-20T12:15:16.1234567Z FAIL"
 
 	orig := Executor
 	Executor = stub
@@ -381,7 +430,7 @@ func TestGetFailedSteps_MultipleStepsSegmented(t *testing.T) {
 			}
 		]
 	}`
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs"] =
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs --allow-escape-sequences"] =
 		"2026-03-20T12:15:15.1234567Z ##[group]Run tests\n" +
 			"2026-03-20T12:15:16.1234567Z FAIL: TestFoo\n" +
 			"2026-03-20T12:15:17.1234567Z ##[endgroup]\n" +
@@ -412,6 +461,194 @@ func TestGetFailedSteps_MultipleStepsSegmented(t *testing.T) {
 	if strings.Contains(steps[1].Log, "FAIL: TestFoo") {
 		t.Errorf("step 1 should not contain test failure, got %q", steps[1].Log)
 	}
+}
+
+func TestGetFailedSteps_RunViewSegmentsNamedStep(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/run-view-named-step.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := newStubExecutor()
+	stub.handlers["run view 100 --json jobs"] = `{
+		"jobs": [
+			{
+				"databaseId": 1002,
+				"name": "Startup Benchmark",
+				"status": "completed",
+				"conclusion": "failure",
+				"steps": [
+					{"name": "Install benchmark dependencies", "status": "completed", "conclusion": "success", "number": 4},
+					{"name": "Benchmark zsh startup", "status": "completed", "conclusion": "failure", "number": 5},
+					{"name": "Post Run actions/checkout@v4", "status": "completed", "conclusion": "success", "number": 6}
+				]
+			}
+		]
+	}`
+	stub.handlers["run view 100 --log --job 1002"] = string(fixture)
+
+	orig := Executor
+	Executor = stub
+	defer func() { Executor = orig }()
+
+	steps, err := GetFailedSteps(context.Background(), 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(steps))
+	}
+
+	for name, log := range map[string]string{"Log": steps[0].Log, "RawLog": steps[0].RawLog} {
+		for _, want := range []string{"Benchmarking zsh startup", "KeyError: 'median'"} {
+			if !strings.Contains(log, want) {
+				t.Errorf("%s missing %q, got %q", name, want, log)
+			}
+		}
+		for _, unwanted := range []string{"Downloading bottle manifests", "Post job cleanup.", "git version", "^[", "\ufeff", "Startup Benchmark\t"} {
+			if strings.Contains(log, unwanted) {
+				t.Errorf("%s contains %q, got %q", name, unwanted, log)
+			}
+		}
+	}
+	if strings.Contains(steps[0].Log, "2026-11-04T") {
+		t.Errorf("Log should have no timestamps, got %q", steps[0].Log)
+	}
+	if !strings.HasPrefix(steps[0].RawLog, "2026-11-04T20:17:37.5576010Z ##[group]Run ") {
+		t.Errorf("RawLog should start at the step's timestamped header, got %q", steps[0].RawLog)
+	}
+}
+
+func TestStepLogs_RunViewColumn(t *testing.T) {
+	steps := []Step{{Name: "Run tests"}, {Name: "Lint"}}
+	runView := "test\t run TESTS \tFAIL: TestFoo\ntest\tLint\tlint ok"
+	lp := logPair{clean: stripLogPrefixes(runView), raw: stripTabPrefixesOnly(runView), runView: runView}
+
+	t.Run("matches case and whitespace insensitively", func(t *testing.T) {
+		clean, raw := stepLogs(lp, Step{Name: "Run tests"}, steps)
+		if clean != "FAIL: TestFoo" || raw != "FAIL: TestFoo" {
+			t.Errorf("got clean %q raw %q", clean, raw)
+		}
+	})
+
+	t.Run("no matching column falls back to the full log", func(t *testing.T) {
+		clean, raw := stepLogs(lp, Step{Name: "Build"}, steps)
+		if clean != lp.clean || raw != lp.raw {
+			t.Errorf("got clean %q raw %q", clean, raw)
+		}
+	})
+}
+
+const restNamedStepJobs = `{
+	"jobs": [
+		{
+			"id": 1002,
+			"name": "Startup Benchmark",
+			"status": "completed",
+			"conclusion": "failure",
+			"run_attempt": 1,
+			"steps": [
+				{"name": "Detect zsh-affecting changes", "conclusion": "success", "number": 3, "started_at": "2026-11-04T20:17:24Z"},
+				{"name": "Install benchmark dependencies", "conclusion": "success", "number": 4, "started_at": "2026-11-04T20:17:25Z"},
+				{"name": "Benchmark zsh startup", "conclusion": "failure", "number": 5, "started_at": "2026-11-04T20:17:37Z"},
+				{"name": "Update startup badge", "conclusion": "skipped", "number": 6, "started_at": "2026-11-04T20:17:47Z"},
+				{"name": "Post Run actions/checkout@v4", "conclusion": "success", "number": 12, "started_at": "2026-11-04T20:17:47Z"}
+			]
+		}
+	]
+}`
+
+func TestGetFailedSteps_RESTSegmentsNamedStepByTiming(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/rest-named-step.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := newStubExecutor()
+	stub.handlers["api repos/{owner}/{repo}/actions/runs/100/jobs?filter=all"] = restNamedStepJobs
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs --allow-escape-sequences"] = string(fixture)
+
+	orig := Executor
+	Executor = stub
+	defer func() { Executor = orig }()
+
+	steps, err := GetFailedSteps(context.Background(), 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(steps) != 1 {
+		t.Fatalf("expected 1 step, got %d", len(steps))
+	}
+
+	for name, log := range map[string]string{"Log": steps[0].Log, "RawLog": steps[0].RawLog} {
+		for _, want := range []string{"##[group]Run ./scripts/ci/benchmark-startup.sh 125", "Benchmarking zsh startup", "KeyError: 'median'"} {
+			if !strings.Contains(log, want) {
+				t.Errorf("%s missing %q, got %q", name, want, log)
+			}
+		}
+		for _, unwanted := range []string{"Pouring fnm", "Caveats", "Post job cleanup.", "git version", "\x1b"} {
+			if strings.Contains(log, unwanted) {
+				t.Errorf("%s contains %q, got %q", name, unwanted, log)
+			}
+		}
+	}
+	if strings.Contains(steps[0].Log, "2026-11-04T") {
+		t.Errorf("Log should have no timestamps, got %q", steps[0].Log)
+	}
+	if !strings.HasPrefix(steps[0].RawLog, "2026-11-04T20:17:37.5576030Z ##[group]Run ") {
+		t.Errorf("RawLog should start at the step's timestamped header, got %q", steps[0].RawLog)
+	}
+}
+
+func TestStepLogs_Timing(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/rest-named-step.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := logutil.StripANSI(string(fixture))
+	lp := logPair{clean: logutil.StripTimestamps(raw), raw: raw}
+	steps := restNamedSteps(t)
+
+	t.Run("nested group in the start second does not anchor the step", func(t *testing.T) {
+		_, raw := stepLogs(lp, steps[1], steps)
+		if !strings.HasPrefix(raw, "2026-11-04T20:17:25.5969330Z ##[group]Run brew install") {
+			t.Errorf("should start at the brew header, got %q", raw)
+		}
+		if !strings.HasSuffix(raw, "Caveats") || strings.Contains(raw, "benchmark-startup.sh") {
+			t.Errorf("should end before the next step's header, got %q", raw)
+		}
+	})
+
+	t.Run("missing timing falls back to header match", func(t *testing.T) {
+		clean, raw := stepLogs(lp, Step{Name: "Benchmark zsh startup"}, steps)
+		if clean != lp.clean || raw != lp.raw {
+			t.Errorf("got clean %q raw %q", clean, raw)
+		}
+	})
+
+	t.Run("step without its own header falls back", func(t *testing.T) {
+		raw := "\ufeff2026-11-04T20:17:20.4645780Z Current runner version: '2.338.2'\n" +
+			"2026-11-04T20:17:22.3692800Z ##[group]Run actions/checkout@v4\n" +
+			"2026-11-04T20:17:22.3693680Z with:"
+		lp := logPair{clean: logutil.StripTimestamps(raw), raw: raw}
+		steps := []Step{
+			{Name: "Set up job", StartedAt: time.Date(2026, 11, 4, 20, 17, 20, 0, time.UTC)},
+			{Name: "Run actions/checkout@v4", StartedAt: time.Date(2026, 11, 4, 20, 17, 22, 0, time.UTC)},
+		}
+		clean, got := stepLogs(lp, steps[0], steps)
+		if clean != lp.clean || got != lp.raw {
+			t.Errorf("should fall back to the full log, got clean %q raw %q", clean, got)
+		}
+	})
+}
+
+func restNamedSteps(t *testing.T) []Step {
+	t.Helper()
+	var result struct {
+		Jobs []apiJob `json:"jobs"`
+	}
+	if err := json.Unmarshal([]byte(restNamedStepJobs), &result); err != nil {
+		t.Fatal(err)
+	}
+	return stepsFromAPI(result.Jobs[0].Steps)
 }
 
 func TestShouldSkipStep(t *testing.T) {
@@ -503,7 +740,7 @@ func TestGetFailedSteps_MultipleAttempts(t *testing.T) {
 			}
 		]
 	}`
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs"] = "FAIL: TestBar\nerror on attempt 2"
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/1002/logs --allow-escape-sequences"] = "FAIL: TestBar\nerror on attempt 2"
 
 	orig := Executor
 	Executor = stub
@@ -540,7 +777,7 @@ func TestGetFailedSteps_AttemptAnnotatedOnFirstAttempt(t *testing.T) {
 			}
 		]
 	}`
-	stub.handlers["api repos/{owner}/{repo}/actions/jobs/2001/logs"] = "FAIL: TestFoo"
+	stub.handlers["api repos/{owner}/{repo}/actions/jobs/2001/logs --allow-escape-sequences"] = "FAIL: TestFoo"
 
 	orig := Executor
 	Executor = stub
